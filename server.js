@@ -251,11 +251,26 @@ function wsParseFrame(buf) {
 
 function wsSendText(socket, data) {
   const payload = Buffer.from(typeof data === 'string' ? data : JSON.stringify(data));
-  const frame   = Buffer.alloc(2 + payload.length);
-  frame[0] = 0x81; // FIN + text opcode
-  frame[1] = payload.length; // no masking from server
-  payload.copy(frame, 2);
-  socket.write(frame);
+  const len = payload.length;
+
+  let header;
+  if (len <= 125) {
+    header = Buffer.alloc(2);
+    header[0] = 0x81;  // FIN + text opcode
+    header[1] = len;
+  } else if (len <= 65535) {
+    header = Buffer.alloc(4);
+    header[0] = 0x81;
+    header[1] = 126;   // 16-bit extended length follows
+    header.writeUInt16BE(len, 2);
+  } else {
+    header = Buffer.alloc(10);
+    header[0] = 0x81;
+    header[1] = 127;   // 64-bit extended length follows
+    header.writeBigUInt64BE(BigInt(len), 2);
+  }
+
+  socket.write(Buffer.concat([header, payload]));
 }
 
 // ── Serve static files ────────────────────────────────────────────────────────
