@@ -40,7 +40,7 @@ All of these are available in the Arch repos. The installer will handle `node` a
 ## Installation
 
 ```bash
-git clone https://github.com/yourusername/soundboard.git
+git clone https://github.com/DJenuVDM/soundboard.git
 cd soundboard
 bash install.sh
 ```
