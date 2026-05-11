@@ -12,6 +12,7 @@ A phone-controlled soundboard for Arch Linux / Hyprland, built on PipeWire. Run 
 
 - **Phone UI** — tap a button on your phone's browser to fire a sound on your PC instantly
 - **Real-time sync** — WebSocket keeps all connected clients in sync; playing/stopped state updates everywhere
+- **Sound groups** — organise sounds into folders; each folder becomes a collapsible group on the UI, with loose files collected under **MISC**
 - **PipeWire integration** — creates named nodes (`Soundboard Output`, `Soundboard Mic [in/out]`) that show up in qpwgraph for flexible routing
 - **Mic monitor toggle** — hear your own mic through your headset and mute/unmute it from your phone without affecting Discord or any other app
 - **No npm dependencies** — server is a single vanilla Node.js file; WebSocket protocol is implemented from scratch
@@ -81,6 +82,28 @@ soundboard /path/to/sounds 8080
 
 ---
 
+## Organising Sounds into Groups
+
+Sounds are organised by folder structure. Any **subfolder** inside your sounds directory becomes a named group on the phone UI. Audio files sitting directly in the root of the sounds folder are collected into a **MISC** group at the bottom.
+
+```
+~/Music/soundboard/
+├── memes/
+│   ├── airhorn.mp3
+│   └── bruh.wav
+├── music/
+│   └── dramatic-sting.mp3
+├── sfx/
+│   ├── explosion.wav
+│   └── woosh.ogg
+├── random.mp3       ← goes into MISC
+└── test.wav         ← goes into MISC
+```
+
+This renders as three collapsible groups on the phone — **MEMES**, **MUSIC**, **SFX** — followed by a **MISC** group for the loose files. Tap a group header to collapse or expand it. Only one level of subfolders is scanned; nested folders are ignored.
+
+---
+
 ## PipeWire / qpwgraph setup
 
 When the server starts it registers three named nodes in PipeWire:
@@ -107,6 +130,7 @@ A loopback pair for mic monitoring. Wire your mic source into `[in]` and `[out]`
 
 | Control | Action |
 |---|---|
+| Group header | Collapse / expand that group |
 | Sound button | Play that sound (stops whatever was playing) |
 | ⏹ | Stop the currently playing sound |
 | **MIC OFF / MIC ON** | Toggle mic monitor to headset |
@@ -156,8 +180,8 @@ Sounds live outside the repo at `~/Music/soundboard/` by default so they don't g
 
 The server speaks plain HTTP and implements the WebSocket protocol from scratch (no npm packages). When you tap a sound button:
 
-1. The phone sends a WebSocket message (`{ type: "play", file: "..." }`)
-2. The server spawns `ffmpeg` to decode the file to raw 48 kHz stereo PCM
+1. The phone sends a WebSocket message (`{ type: "play", file: "groupname/sound.mp3" }`)
+2. The server resolves the relative path against the sounds folder (traversal-safe) and spawns `ffmpeg` to decode the file to raw 48 kHz stereo PCM
 3. That PCM is piped into the stdin of a persistent `pw-cat --playback` process (the `Soundboard Output` node)
 4. All connected clients receive a `{ type: "playing" }` broadcast so their UI updates in sync
 

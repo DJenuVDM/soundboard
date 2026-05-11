@@ -143,9 +143,9 @@ function setMicMute(muted) {
 // Falls back to ffplay (spawns its own PipeWire node) if the sink isn't ready.
 
 function playSound(filename) {
-  const filePath = path.join(SOUNDS_DIR, filename);
+  const filePath = resolveSoundPath(filename);
 
-  if (!filePath.startsWith(SOUNDS_DIR + path.sep) && filePath !== SOUNDS_DIR) {
+  if (!filePath) {
     console.warn('[play] Path traversal blocked:', filename);
     return { ok: false, error: 'Invalid path' };
   }
@@ -193,14 +193,50 @@ function stopSound() {
 }
 
 // ── File listing ──────────────────────────────────────────────────────────────
-function listSounds() {
+// Returns grouped structure: [{ name, files: ['relative/path', ...] }, ...]
+// Subdirectories → their own group; flat files → "MISC" group at the end.
+function listSoundGroups() {
   if (!fs.existsSync(SOUNDS_DIR)) {
     fs.mkdirSync(SOUNDS_DIR, { recursive: true });
     return [];
   }
-  return fs.readdirSync(SOUNDS_DIR)
-    .filter(f => AUDIO_EXTS.has(path.extname(f).toLowerCase()))
-    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+
+  const entries = fs.readdirSync(SOUNDS_DIR, { withFileTypes: true });
+  const groups  = [];
+  const misc    = [];
+
+  // Collect named groups from subdirectories (one level deep only)
+  const dirs = entries
+    .filter(e => e.isDirectory())
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+
+  for (const dir of dirs) {
+    const dirPath = path.join(SOUNDS_DIR, dir.name);
+    const files = fs.readdirSync(dirPath)
+      .filter(f => AUDIO_EXTS.has(path.extname(f).toLowerCase()))
+      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+      .map(f => dir.name + '/' + f);   // relative path used as the play key
+    if (files.length > 0) groups.push({ name: dir.name, files });
+  }
+
+  // Collect flat files → MISC
+  entries
+    .filter(e => e.isFile() && AUDIO_EXTS.has(path.extname(e.name).toLowerCase()))
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+    .forEach(e => misc.push(e.name));
+
+  if (misc.length > 0) groups.push({ name: 'MISC', files: misc });
+
+  return groups;
+}
+
+// Kept for internal safety check — resolves a relative sound path to absolute
+function resolveSoundPath(relFile) {
+  // relFile is either "groupDir/filename.mp3" or "filename.mp3"
+  const abs = path.resolve(SOUNDS_DIR, relFile);
+  // Must stay inside SOUNDS_DIR
+  if (!abs.startsWith(SOUNDS_DIR + path.sep) && abs !== SOUNDS_DIR) return null;
+  return abs;
 }
 
 // ── HTTP + WebSocket server (no dependencies) ─────────────────────────────────
@@ -298,10 +334,10 @@ function serveStatic(req, res) {
 function handleAPI(req, res) {
   const url = new URL(req.url, `http://localhost`);
 
-  // GET /api/sounds  — list available sounds
+  // GET /api/sounds  — list available sounds (grouped)
   if (req.method === 'GET' && url.pathname === '/api/sounds') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ sounds: listSounds(), micEnabled }));
+    res.end(JSON.stringify({ groups: listSoundGroups(), micEnabled }));
     return;
   }
 
@@ -398,7 +434,7 @@ server.on('upgrade', (req, socket, head) => {
   socket._missedPing = false;
   clients.add(socket);
 
-  wsSendText(socket, JSON.stringify({ type: 'init', sounds: listSounds(), micEnabled }));
+  wsSendText(socket, JSON.stringify({ type: 'init', groups: listSoundGroups(), micEnabled }));
 
   let buf = Buffer.alloc(0);
   socket.on('data', chunk => {
@@ -431,7 +467,7 @@ function handleWS(socket, msg) {
     setMicMute(!micEnabled);
     broadcast({ type: 'mic', enabled: micEnabled });
   } else if (msg.type === 'reload') {
-    broadcast({ type: 'init', sounds: listSounds(), micEnabled });
+    broadcast({ type: 'init', groups: listSoundGroups(), micEnabled });
   }
 }
 

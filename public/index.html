@@ -231,17 +231,79 @@
   }
   #now-playing.active { color: var(--accent); }
 
-  /* ── sound grid ── */
+  /* ── sound groups ── */
   #grid {
     flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    padding: 4px 0 24px;
+  }
+
+  .group-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .group-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 18px 16px 10px;
+    cursor: pointer;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .group-header-label {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: clamp(15px, 4vw, 20px);
+    letter-spacing: 0.12em;
+    color: var(--accent3);
+    text-shadow: 0 0 12px rgba(124,107,255,0.4);
+    flex: 1;
+  }
+
+  .group-count {
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+  }
+
+  .group-chevron {
+    font-size: 11px;
+    color: var(--muted);
+    transition: transform 0.25s;
+  }
+  .group-section.collapsed .group-chevron { transform: rotate(-90deg); }
+
+  .group-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 0 16px;
+    opacity: 0.6;
+  }
+
+  .group-grid {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
     gap: 10px;
-    padding: 4px 16px 24px;
+    padding: 10px 16px 8px;
+    overflow: hidden;
+    transition: max-height 0.3s ease, opacity 0.3s ease;
+    max-height: 9999px;
+    opacity: 1;
+  }
+  .group-section.collapsed .group-grid {
+    max-height: 0;
+    opacity: 0;
+    padding-top: 0;
+    padding-bottom: 0;
   }
 
-  @media (min-width: 500px) { #grid { grid-template-columns: repeat(3, 1fr); } }
-  @media (min-width: 700px) { #grid { grid-template-columns: repeat(4, 1fr); } }
+  @media (min-width: 500px) { .group-grid { grid-template-columns: repeat(3, 1fr); } }
+  @media (min-width: 700px) { .group-grid { grid-template-columns: repeat(4, 1fr); } }
 
   /* ── sound button ── */
   .sound-btn {
@@ -439,7 +501,7 @@
       try {
         const msg = JSON.parse(e.data);
         if (msg.type === 'init') {
-          renderGrid(msg.sounds);
+          renderGrid(msg.groups || msg.sounds);
           setMic(msg.micEnabled);
         } else if (msg.type === 'playing') {
           setPlaying(msg.file);
@@ -485,10 +547,15 @@
     return ICONS[h % ICONS.length];
   }
 
-  function renderGrid(sounds) {
+  function renderGrid(groups) {
     grid.innerHTML = '';
 
-    if (!sounds || sounds.length === 0) {
+    // Support legacy flat 'sounds' array from older server versions
+    if (Array.isArray(groups) && typeof groups[0] === 'string') {
+      groups = [{ name: 'MISC', files: groups }];
+    }
+
+    if (!groups || groups.length === 0 || groups.every(g => g.files.length === 0)) {
       const empty = document.createElement('div');
       empty.id = 'empty';
       empty.innerHTML = `
@@ -501,25 +568,58 @@
       return;
     }
 
-    sounds.forEach(file => {
-      const btn = document.createElement('button');
-      btn.className = 'sound-btn';
-      btn.dataset.file = file;
+    groups.forEach(group => {
+      if (!group.files || group.files.length === 0) return;
 
-      const name = file.replace(/\.[^.]+$/, ''); // strip extension
+      const section = document.createElement('div');
+      section.className = 'group-section';
+      section.dataset.group = group.name;
 
-      btn.innerHTML = `
-        <span class="icon">${iconFor(name)}</span>
-        <span class="label">${escHtml(name)}</span>
-        <div class="progress-bar"></div>
+      // Header (clickable to collapse/expand)
+      const header = document.createElement('div');
+      header.className = 'group-header';
+      header.innerHTML = `
+        <span class="group-header-label">${escHtml(group.name)}</span>
+        <span class="group-count">${group.files.length}</span>
+        <span class="group-chevron">▼</span>
       `;
+      header.addEventListener('click', () => section.classList.toggle('collapsed'));
+      section.appendChild(header);
 
-      btn.addEventListener('click', () => playSound(file));
-      btn.addEventListener('touchstart', () => {}, { passive: true }); // pre-touch for iOS latency
+      // Divider
+      const divider = document.createElement('div');
+      divider.className = 'group-divider';
+      section.appendChild(divider);
 
-      if (file === playingFile) btn.classList.add('playing');
+      // Button grid
+      const groupGrid = document.createElement('div');
+      groupGrid.className = 'group-grid';
 
-      grid.appendChild(btn);
+      group.files.forEach(file => {
+        const btn = document.createElement('button');
+        btn.className = 'sound-btn';
+        btn.dataset.file = file;
+
+        // Display name: strip directory prefix and extension
+        const basename = file.includes('/') ? file.split('/').pop() : file;
+        const name = basename.replace(/\.[^.]+$/, '');
+
+        btn.innerHTML = `
+          <span class="icon">${iconFor(name)}</span>
+          <span class="label">${escHtml(name)}</span>
+          <div class="progress-bar"></div>
+        `;
+
+        btn.addEventListener('click', () => playSound(file));
+        btn.addEventListener('touchstart', () => {}, { passive: true });
+
+        if (file === playingFile) btn.classList.add('playing');
+
+        groupGrid.appendChild(btn);
+      });
+
+      section.appendChild(groupGrid);
+      grid.appendChild(section);
     });
   }
 
@@ -568,7 +668,8 @@
     });
     // update now-playing bar
     if (file) {
-      const name = file.replace(/\.[^.]+$/, '');
+      const basename = file.includes('/') ? file.split('/').pop() : file;
+      const name = basename.replace(/\.[^.]+$/, '');
       nowPlaying.textContent = '▶ ' + name;
       nowPlaying.classList.add('active');
       stopBtn.classList.add('lit');
